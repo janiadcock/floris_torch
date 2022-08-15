@@ -950,13 +950,9 @@ def crespo_hernandez(
     ambient_TI, x_coord_downstream, x_coord_upstream, rotor_diameter, aI
 ):
     ti_initial = 0.01
-    ti_constant = 0.5
-    ti_ai = 0.8
-    ti_downstream = -0.32
-#     ti_initial = 0.01
-#     ti_constant = 0.9
-#     ti_ai = 0.83
-#     ti_downstream = -0.25
+    ti_constant = 0.9
+    ti_ai = 0.83
+    ti_downstream = -0.25
     
     # replace zeros and negatives with 1 to prevent nans/infs
     # keep downstream components; set upstream to 1.0
