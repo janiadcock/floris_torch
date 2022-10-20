@@ -23,5 +23,5 @@ class DPCModel(nn.Module):
         # u: control action (yaw angle for each turbine)
         u = F.relu(self.input_layer(x))
         u = F.relu(self.hidden_layer(u))
-        u = torch.sigmoid(self.output_layer(u))*1.2-.1 # allow exploration slightly outside bounds
+        u = torch.sigmoid(self.output_layer(u))
         return u
