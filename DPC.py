@@ -7,10 +7,13 @@ class DPCModel(nn.Module):
         self,
         n_turbines: int,
         hidden_dim: int = 64,
+        dropout: bool = False,
         **kwargs
     ):
         super().__init__()
         input_size = 2 # ws, wd
+        if dropout:
+            input_size += n_turbines # dropout (T/F for each turbine)
         self.input_layer = nn.Linear(input_size, hidden_dim)
         self.hidden_layer = nn.Linear(hidden_dim, hidden_dim)
         self.output_layer = nn.Linear(hidden_dim, n_turbines)
