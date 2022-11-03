@@ -10,6 +10,6 @@ ACC.ipynb contains the code used to generate results for our submission to the 2
 
 [1] NREL, FLORIS v. 3.2, available at: https://github.com/NREL/floris, 2022.
 
-[2] J. Drgoňa, A. Tuor, and D. Vrabie, Learning constrained adaptive differentiable predictive control policies with guarantees, arXiv:2004- 11184v6 [eess.SY], Jan. 2022.
+[2] J. Drgoňa, A. Tuor, and D. Vrabie, Learning constrained adaptive differentiable predictive control policies with guarantees, arXiv:2004-11184v6 [eess.SY], Jan. 2022.
 
-[3] C. Adcock, J. King, Differentiable predictive control for adaptive wake steering, American Control Conference, 2023 (submitted.)
+[3] C. Adcock and J. King, Differentiable predictive control for adaptive wake steering, American Control Conference, 2023 (submitted.)
