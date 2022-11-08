@@ -72,7 +72,11 @@ class FLORIS_PT():
             x_coord = x_coord_full[active_turbs]
             y_coord = y_coord_full[active_turbs]
             z_coord = z_coord_full[active_turbs]
-        
+        else:
+            x_coord = x_coord_full
+            y_coord = y_coord_full
+            z_coord = z_coord_full    
+            
         y_ngrid = self.turbine_grid_points
         z_ngrid = self.turbine_grid_points # could change to allow diff. value than y_ngrid
         x_grid = torch.zeros((len(x_coord), y_ngrid, z_ngrid))
