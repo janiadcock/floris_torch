@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-class DPCModel(nn.Module):
+class DCModel(nn.Module):
     def __init__(
         self,
         n_turbines: int,
@@ -11,7 +11,7 @@ class DPCModel(nn.Module):
         **kwargs
     ):
         super().__init__()
-        input_size = 2 # ws, wd
+        input_size = 1 # ws
         if dropout:
             input_size += n_turbines # dropout (T/F for each turbine)
         self.input_layer = nn.Linear(input_size, hidden_dim)

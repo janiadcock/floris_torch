@@ -66,22 +66,9 @@ class FLORIS_PT():
             
     # generate mesh on each turbine's rotor disk
     # rotate mesh based on wd to align with 270 degrees
-    def get_turbine_mesh(self, wd, x_coord_full, y_coord_full, z_coord_full, active_turbs=None):
-        # apply dropout
-        if active_turbs is not None:
-            x_coord = x_coord_full[active_turbs]
-            y_coord = y_coord_full[active_turbs]
-            z_coord = z_coord_full[active_turbs]
-        else:
-            x_coord = x_coord_full
-            y_coord = y_coord_full
-            z_coord = z_coord_full    
-            
+    def get_turbine_mesh(self, wd, x_coord, y_coord, z_coord):            
         y_ngrid = self.turbine_grid_points
         z_ngrid = self.turbine_grid_points # could change to allow diff. value than y_ngrid
-        x_grid = torch.zeros((len(x_coord), y_ngrid, z_ngrid))
-        y_grid = torch.zeros((len(x_coord), y_ngrid, z_ngrid))
-        z_grid = torch.zeros((len(x_coord), y_ngrid, z_ngrid))
 
         angle = ((wd - 270) % 360 + 360) % 360
 
@@ -102,7 +89,8 @@ class FLORIS_PT():
         z_grid = torch.ones((len(x_coord), y_ngrid, z_ngrid)) * zt.T[:, None, :]
 
         # yaw turbines to be perpendicular to the wind direction
-        wind_direction_i = angle[None, :, None, None, None, None]
+        # dim = [sa, turbine, spanwise grid pts, vertical grid pts]
+        wind_direction_i = angle[:, None, None, None]
         xoffset = x_grid - x1[:, None, None]
         yoffset = y_grid - x2[:, None, None]
         wind_cos = cosd(-wind_direction_i)
@@ -117,7 +105,7 @@ class FLORIS_PT():
         # rotate turbine locations/fields to be perpendicular to wind direction
         x_center_of_rotation = torch.mean(torch.stack([torch.min(mesh_x), torch.max(mesh_x)]))
         y_center_of_rotation = torch.mean(torch.stack([torch.min(mesh_y), torch.max(mesh_y)]))
-        angle = ((wd[None, :, None, None, None, None] - 270) % 360 + 360) % 360
+        angle = ((wd[:, None, None, None] - 270) % 360 + 360) % 360
         x_offset = mesh_x - x_center_of_rotation
         y_offset = mesh_y - y_center_of_rotation
         mesh_x_rotated = (x_offset * cosd(angle) - y_offset * sind(angle) 
@@ -132,19 +120,19 @@ class FLORIS_PT():
         y_coord_rotated = (x_coord_offset * sind(angle)
             + y_coord_offset * cosd(angle)
             + y_center_of_rotation)
-        inds_sorted = x_coord_rotated.argsort(axis=3)
+        inds_sorted = x_coord_rotated.argsort(axis=1)
 
-        x_coord_rotated = torch.gather(x_coord_rotated, 3, inds_sorted)
-        y_coord_rotated = torch.gather(y_coord_rotated, 3, inds_sorted)
+        x_coord_rotated = torch.gather(x_coord_rotated, 1, inds_sorted)
+        y_coord_rotated = torch.gather(y_coord_rotated, 1, inds_sorted)
 
-        mesh_x_rotated = torch.take_along_dim(mesh_x_rotated, inds_sorted, 3)
-        mesh_y_rotated = torch.take_along_dim(mesh_y_rotated, inds_sorted, 3)
+        mesh_x_rotated = torch.take_along_dim(mesh_x_rotated, inds_sorted, 1)
+        mesh_y_rotated = torch.take_along_dim(mesh_y_rotated, inds_sorted, 1)
 
         return x_coord_rotated, y_coord_rotated, mesh_x_rotated, \
-            mesh_y_rotated, mesh_z, inds_sorted, x_coord
+            mesh_y_rotated, mesh_z, inds_sorted
     
-    def get_field_rotor(self, ws, wd, clipped_u, x_coord, x_coord_rotated, y_coord_rotated, 
-        mesh_x_rotated, mesh_y_rotated, mesh_z, inds_sorted):
+    def get_field_rotor(self, ws, clipped_u, x_coord_rotated, y_coord_rotated, 
+        mesh_x_rotated, mesh_y_rotated, mesh_z, inds_sorted, active_turbs_sorted=None):
 
         # name constants
         wind_shear = self.flow_field['wind_shear']
@@ -159,9 +147,9 @@ class FLORIS_PT():
         z_ngrid = self.turbine_grid_points # could change to allow diff. value than y_ngrid
 
         ## initialize flow field ##
-        flow_field_u_initial = (ws[None, None, :, None, None, None] 
+        flow_field_u_initial = (ws[:, None, None, None] 
                             * (mesh_z / specified_wind_height) ** wind_shear) \
-                            * torch.ones((1, len(wd), 1, 1, 1, 1))
+                            * torch.ones((len(ws), 1, 1, 1))
 
         ## initialize other field values ##
         u_wake = torch.zeros(flow_field_u_initial.shape)
@@ -173,31 +161,33 @@ class FLORIS_PT():
         ambient_TIs = torch.ones_like(x_coord_rotated) * TI
         yaw_angle = clipped_u.reshape(x_coord_rotated.shape)
         turbine_tilt = torch.ones_like(x_coord_rotated) * 0.0
+        yaw_angle_flat = torch.squeeze(torch.squeeze(yaw_angle, dim=2), dim=2)
 
         # Loop over turbines to solve wakes
-        for i in range(len(x_coord)):
+        for i in range(x_coord_rotated.shape[1]):
             turb_inflow_field = turb_inflow_field \
-            * (mesh_x_rotated != x_coord_rotated[:, :, :, i, :, :][:, :, :, None, :, :]) \
+            * (mesh_x_rotated != x_coord_rotated[:, i, :, :][:, None, :, :]) \
             + (flow_field_u_initial - u_wake) \
-            * (mesh_x_rotated == x_coord_rotated[:, :, :, i, :, :][:, :, :, None, :, :])
+            * (mesh_x_rotated == x_coord_rotated[:, i, :, :][:, None, :, :])
 
-            turb_avg_vels = torch.pow(torch.mean(turb_inflow_field ** 3, dim=(4,5)), 1./3.)
-            
+            turb_avg_vels = torch.pow(torch.mean(turb_inflow_field ** 3, dim=(2,3)), 1./3.)
+            if active_turbs_sorted is not None:
+                turb_avg_vels = torch.where(active_turbs_sorted[:,i].reshape(-1,1), 
+                    turb_avg_vels, torch.tensor(0.))
             Ct = interp(wind_speed, thrust, turb_avg_vels)
-            yaw_angle_flat = torch.squeeze(torch.squeeze(yaw_angle, dim=4), dim=4)
             Ct *= cosd(yaw_angle_flat) # effective thrust
-            Ct = Ct * (Ct < 1.0) + 0.9999 * torch.ones_like(Ct) * (Ct >= 1.0)
-            turb_Cts = Ct * (Ct > 0.0) + 0.0001 * torch.ones_like(Ct) * (Ct <= 0.0)
+            Ct = Ct * (Ct <= 1.0) + 0.9999 * torch.ones_like(Ct) * (Ct > 1.0)
+            turb_Cts = Ct * (Ct >= 0.0) + 0.0001 * torch.ones_like(Ct) * (Ct < 0.0)
 
             turb_aIs = 0.5 / cosd(yaw_angle_flat) * (1 - torch.sqrt(1 - turb_Cts * cosd(yaw_angle_flat) + 1e-16))
 
             ## Wake deflection calculation ##
             yaw = yaw_angle # if no secondary steering    
-            x_coord_rotated_i = x_coord_rotated[:, :, :, i, :, :][:, :, :, None, :, :]
-            y_coord_rotated_i = y_coord_rotated[:, :, :, i, :, :][:, :, :, None, :, :]
-            turbine_ti_i = turb_TIs[:, :, :, i, :, :][:, :, :, None, :, :]
-            turbine_Ct_i = turb_Cts[:, :, :, i][:, :, :, None, None, None]
-            yaw_i = yaw[:, :, :, i, :, :][:, :, :, None, :, :]
+            x_coord_rotated_i = x_coord_rotated[:, i, :, :][:, None, :, :]
+            y_coord_rotated_i = y_coord_rotated[:, i, :, :][:, None, :, :]
+            turbine_ti_i = turb_TIs[:, i, :, :][:, None, :, :]
+            turbine_Ct_i = turb_Cts[:, i][:, None, None, None]
+            yaw_i = yaw[:, i, :, :][:, None, :, :]
             neg_yaw_i = -1. * yaw_i # wake deflection has opposite sign convention
 
             ka = 0.38  # wake expansion parameter
@@ -213,7 +203,7 @@ class FLORIS_PT():
 
             # initial velocity deficits
             uR = (U_local * turbine_Ct_i * cosd(turbine_tilt) * cosd(neg_yaw_i)
-                  / (2.0 * (1 - torch.sqrt(1 - (turbine_Ct_i * cosd(turbine_tilt) * cosd(neg_yaw_i)) + 1e-16))))
+                  / (2.0 * (1 - torch.sqrt(1 - (turbine_Ct_i * cosd(turbine_tilt) * cosd(neg_yaw_i)) + 1e-16)) + 1e-16))
             u0 = U_local * torch.sqrt(1 - turbine_Ct_i + 1e-16)
 
             # length of near wake
@@ -237,12 +227,12 @@ class FLORIS_PT():
             yR = mesh_y_rotated - y_coord_rotated_i
             xR = x_coord_rotated_i
 
-            # yaw_i parameter (skew angle)
+            # yaw_i parameter (skew angle in radians)
             theta_c0 = (dm * (0.3 * torch.deg2rad(neg_yaw_i) / cosd(neg_yaw_i)) 
-                        * (1 - torch.sqrt(1 - turbine_Ct_i * cosd(neg_yaw_i) + 1e-16))) # skew angle in radians
+                        * (1 - torch.sqrt(1 - turbine_Ct_i * cosd(neg_yaw_i) + 1e-16)))
 
             # yaw_i param (distance from centerline=initial wake deflection)
-            # NOTE: use tan here since theta_c0 is radians
+            # use tan here since theta_c0 is radians
             delta0 = torch.tan(theta_c0) * (x0 - x_coord_rotated_i) 
 
             # deflection in the near wake
@@ -262,7 +252,7 @@ class FLORIS_PT():
             ln_deltaDen = (1.6 - torch.sqrt(M0)) \
                 * (1.6 * torch.sqrt(sigma_y * sigma_z / (sigma_y0 * sigma_z0) + 1e-16) + torch.sqrt(M0 + 1e-16))
             delta_far_wake = (delta0 + (theta_c0 * E0 / 5.2)
-                              * torch.sqrt(sigma_y0 * sigma_z0 / (ky * kz * M0) + 1e-16)
+                              * torch.sqrt(sigma_y0 * sigma_z0 / (ky * kz * M0 + 1e-16) + 1e-16)
                               * torch.log(ln_deltaNum / ln_deltaDen)
                               + (ad + bd * (mesh_x_rotated - x_coord_rotated_i)))
             delta_far_wake = delta_far_wake * (mesh_x_rotated > x0)
@@ -277,7 +267,7 @@ class FLORIS_PT():
 
             # mask upstream wake
             #   initial velocity deficits
-            uR = U_local * turbine_Ct_i / (2.0 * (1. - torch.sqrt(1. - turbine_Ct_i + 1e-16)))
+            uR = U_local * turbine_Ct_i / (2.0 * (1. - torch.sqrt(1. - turbine_Ct_i + 1e-16)) + 1e-16)
             u0 = U_local * torch.sqrt(1. - turbine_Ct_i + 1e-16)
             #   initial wake expansion
             sigma_z0 = rotor_diameter * 0.5 * torch.sqrt(uR / (U_local + u0) + 1e-16)
@@ -344,11 +334,11 @@ class FLORIS_PT():
             flow_field_u = flow_field_u_initial - u_wake
 
             ## Calculate wake overlap for wake-added turbulence (WAT) ##
-            area_overlap = torch.sum(turb_u_wake * flow_field_u_initial > 0.05, axis=(4, 5)) / (y_ngrid * z_ngrid)
+            area_overlap = torch.sum(turb_u_wake * flow_field_u_initial > 0.05, axis=(2, 3)) / (y_ngrid * z_ngrid)
 
             ## Calculate WAT for turbines ##
             # turbulence intensity calculation based on Crespo et. al.
-            turbine_aI_i = turb_aIs[:, :, :, i][:, :, :, None, None, None]
+            turbine_aI_i = turb_aIs[:, i][:, None, None, None]
             ti_initial = 0.1
             ti_constant = 0.5
             ti_ai = 0.8
@@ -370,20 +360,20 @@ class FLORIS_PT():
             # TODO: will need to make the rotor_diameter part of this mask work for
             # turbines of different types
             downstream_influence_length = 15 * rotor_diameter
-            ti_added = (area_overlap[:, :, :, :, None, None] * torch.nan_to_num(WAT_TIs, posinf=0.0) 
-                * (x_coord_rotated > x_coord_rotated[:, :, :, i, :, :][:, :, :, None, :, :])
-                * (torch.abs(y_coord_rotated[:, :, :, i, :, :][:, :, :, None, :, :] - y_coord_rotated) 
+            ti_added = (area_overlap[:, :, None, None] * torch.nan_to_num(WAT_TIs, posinf=0.0) 
+                * (x_coord_rotated > x_coord_rotated[:, i, :, :][:, None, :, :])
+                * (torch.abs(y_coord_rotated[:, i, :, :][:, None, :, :] - y_coord_rotated) 
                    < 2 * rotor_diameter)
                 * (x_coord_rotated <= downstream_influence_length
-                   + x_coord_rotated[:, :, :, i, :, :][:, :, :, None, :, :]))
+                   + x_coord_rotated[:, i, :, :][:, None, :, :]))
 
             ## Combine turbine TIs with WAT
             turb_TIs = torch.maximum(torch.sqrt(ti_added ** 2 + ambient_TIs ** 2 + 1e-16), turb_TIs,)    
 
-        return flow_field_u, yaw_angle
+        return flow_field_u, yaw_angle_flat
     
     # calculate power produced by each turbine in farm
-    def get_power(self, flow_field_u, x_coord_rotated, yaw_angle):
+    def get_power(self, flow_field_u, x_coord_rotated, yaw_angle, active_turbs_sorted=None):
         ## power calculation (based on main floris branch) ##
         # omitted fCp_interp b/c interp power from wind_speed to wind_speed so does nothing...
         
@@ -402,14 +392,15 @@ class FLORIS_PT():
         # ix_filter not implemented
 
         # Compute the yaw effective velocity
-        pPs = torch.ones_like(x_coord_rotated) * pP
+        pPs = torch.ones_like(yaw_angle) * pP
         pW = pPs / 3.0  # Convert from pP to w
-        axis = tuple([4 + i for i in range(flow_field_u.ndim - 4)])
+        axis = tuple([2 + i for i in range(flow_field_u.ndim - 2)])
         average_velocity = torch.pow(torch.mean(flow_field_u ** 3, axis=axis), 1./3.).reshape(yaw_angle.shape)
         yaw_effective_velocity = ((air_density/1.225)**(1/3)) * average_velocity * cosd(yaw_angle) ** pW
 
         # Power produced by a turbine adjusted for yaw and tilt. Value given in kW
         p = 1.225 * interp(wind_speed, inner_power, yaw_effective_velocity) / 1000.0
-
+        p = torch.where(active_turbs_sorted.squeeze(), p, torch.tensor(0.))
+        
         # negative sign on power b/c good -> want to minimize
         return p
