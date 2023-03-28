@@ -176,8 +176,8 @@ class FLORIS_PT():
                     turb_avg_vels, torch.tensor(0.))
             Ct = interp(wind_speed, thrust, turb_avg_vels)
             Ct *= cosd(yaw_angle_flat) # effective thrust
-            Ct = Ct * (Ct <= 1.0) + 0.9999 * torch.ones_like(Ct) * (Ct > 1.0)
-            turb_Cts = Ct * (Ct >= 0.0) + 0.0001 * torch.ones_like(Ct) * (Ct < 0.0)
+            Ct = Ct * (Ct < 1.0) + 0.9999 * torch.ones_like(Ct) * (Ct >= 1.0)
+            turb_Cts = Ct * (Ct > 0.0) + 0.0001 * torch.ones_like(Ct) * (Ct <= 0.0)
 
             turb_aIs = 0.5 / cosd(yaw_angle_flat) * (1 - torch.sqrt(1 - turb_Cts * cosd(yaw_angle_flat) + 1e-16))
 
@@ -400,7 +400,8 @@ class FLORIS_PT():
 
         # Power produced by a turbine adjusted for yaw and tilt. Value given in kW
         p = 1.225 * interp(wind_speed, inner_power, yaw_effective_velocity) / 1000.0
-        p = torch.where(active_turbs_sorted.squeeze(), p, torch.tensor(0.))
+        if active_turbs_sorted is not None:
+            p = torch.where(active_turbs_sorted.squeeze(), p, torch.tensor(0.))
         
         # negative sign on power b/c good -> want to minimize
         return p
